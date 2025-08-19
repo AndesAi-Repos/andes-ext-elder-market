@@ -1,0 +1,5 @@
+{
+  "dependencies": {
+    "node-celery": "^0.2.8"
+  }
+}
