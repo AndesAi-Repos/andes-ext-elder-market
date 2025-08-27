@@ -8,7 +8,7 @@
 # --- Dependencias de Node.js ---
 /express_webhook/node_modules/
 
-# --- Archivos de Entorno (¡¡¡MUY IMPORTANTE!!!) ---
+# --- Archivos de Entorno ---
 .env
 
 # --- Modelo de VOSK ---

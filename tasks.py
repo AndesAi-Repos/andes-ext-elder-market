@@ -1,5 +1,3 @@
-# tasks.py (VERSIÓN FINAL CON CIERRE CORRECTO DE ARCHIVOS)
-
 import os
 import uuid
 import requests
@@ -7,6 +5,7 @@ import ffmpeg
 import time
 import json
 import wave
+import datetime
 from vosk import Model, KaldiRecognizer
 from celery import Celery
 from dotenv import load_dotenv
@@ -15,7 +14,7 @@ from google.api_core import exceptions
 
 from database import SessionLocal, Feedback
 
-# --- CONFIGURACIÓN ---
+# --- 1. CONFIGURACIÓN INICIAL ---
 load_dotenv()
 celery_app = Celery(__name__, broker=os.getenv("CELERY_BROKER_URL"))
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
@@ -27,7 +26,37 @@ if not os.path.exists(VOSK_MODEL_PATH):
 model_vosk = Model(VOSK_MODEL_PATH)
 
 
-# --- FUNCIÓN DE AYUDA CON REINTENTOS PARA GEMINI ---
+# --- 2. FUNCIÓN PARA ENVIAR MENSAJES DE WHATSAPP ---
+def send_whatsapp_message(phone_number: str, message_body: str, buttons: list = None):
+    API_URL = f"https://graph.facebook.com/v20.0/{os.getenv('WHATSAPP_PHONE_NUMBER_ID')}/messages"
+    headers = {"Authorization": f"Bearer {os.getenv('WHATSAPP_API_TOKEN')}", "Content-Type": "application/json"}
+    
+    payload = { "messaging_product": "whatsapp", "to": phone_number }
+    
+    if buttons:
+        payload["type"] = "interactive"
+        payload["interactive"] = {
+            "type": "button",
+            "body": {"text": message_body},
+            "action": {
+                "buttons": [{"type": "reply", "reply": {"id": f"btn_{btn_text.lower()}", "title": btn_text}} for btn_text in buttons]
+            }
+        }
+    else:
+        payload["type"] = "text"
+        payload["text"] = {"body": message_body}
+
+    try:
+        print(f"Enviando mensaje a {phone_number}: '{message_body[:30]}...'")
+        response = requests.post(API_URL, headers=headers, json=payload)
+        response.raise_for_status()
+        print("Mensaje enviado con éxito.")
+    except requests.exceptions.HTTPError as e:
+        print(f"!!!!!!!!!!!!!! ERROR AL ENVIAR MENSAJE DE WHATSAPP !!!!!!!!!!!!!!")
+        print(f"Respuesta: {e.response.text}")
+
+
+# --- 3. FUNCIÓN DE AYUDA CON REINTENTOS PARA GEMINI ---
 def generate_content_with_retry(model, prompt, max_retries=3):
     retries = 0
     wait_time = 2
@@ -45,18 +74,19 @@ def generate_content_with_retry(model, prompt, max_retries=3):
     raise Exception("Se superó el número máximo de reintentos para la API de Gemini.")
 
 
-# --- TAREA PRINCIPAL DE CELERY ---
+# --- 4. LA TAREA PRINCIPAL DE CELERY (EL MOTOR DE ENCUESTAS) ---
 @celery_app.task(name='process_feedback_task')
 def process_feedback(payload):
     print(f"--- INICIO TAREA --- Usuario: {payload['user_id']}, Tipo: {payload['type']}")
+    
+    db = SessionLocal()
+    user_id = payload['user_id']
+    user_message_text = ""
 
-    final_text = ""
-    db_entry = Feedback(user_id=payload['user_id'], message_type=payload['type'])
-
-    if payload['type'] == 'audio':
-
-        original_audio_path = f"temp_{uuid.uuid4()}.ogg"
-        wav_audio_path = f"temp_{uuid.uuid4()}.wav"
+    # 1. Extraer el texto del mensaje del usuario
+    if payload['type'] == 'text' or payload['type'] == 'interactive':
+        user_message_text = payload.get('content', '').strip().lower()
+    elif payload['type'] == 'audio':
         try:
             media_id = payload['media_id']
             api_token = os.getenv("WHATSAPP_API_TOKEN")
@@ -69,76 +99,102 @@ def process_feedback(payload):
             response_download = requests.get(media_url, headers=headers_download)
             response_download.raise_for_status()
             
+            original_audio_path = f"temp_{uuid.uuid4()}.ogg"
+            wav_audio_path = f"temp_{uuid.uuid4()}.wav"
             with open(original_audio_path, 'wb') as f: f.write(response_download.content)
-            
-            print("[FFMPEG_STEP] Convirtiendo audio a formato WAV para Vosk...")
             (ffmpeg.input(original_audio_path).output(wav_audio_path, acodec='pcm_s16le', ac=1, ar=16000).run(overwrite_output=True, quiet=True))
             
-            print("[VOSK_STEP] Transcribiendo audio localmente...")
             with wave.open(wav_audio_path, "rb") as wf:
                 rec = KaldiRecognizer(model_vosk, wf.getframerate())
-                rec.SetWords(True)
-                
                 while True:
                     data = wf.readframes(4000)
                     if len(data) == 0: break
                     rec.AcceptWaveform(data)
+            result_dict = json.loads(rec.FinalResult())
+            user_message_text = result_dict.get('text', '')
+            print(f"Audio transcrito a: '{user_message_text}'")
             
-            result_json = rec.FinalResult()
-            result_dict = json.loads(result_json)
-            final_text = result_dict['text']
-            
-            db_entry.transcribed_text = final_text
-            print(f"[VOSK_STEP] Transcripción exitosa: '{final_text}'")
-
+            os.remove(original_audio_path)
+            os.remove(wav_audio_path)
         except Exception as e:
-            print(f"!!!!!!!!!!!!!! ERROR EN EL PROCESO DE AUDIO !!!!!!!!!!!!!!")
-            print(f"Error: {e}")
+            print(f"Error en transcripción de audio: {e}")
+            db.close()
             return
-        finally:
-            # Nos aseguramos de borrar los archivos temporales incluso si algo falla
-            if os.path.exists(original_audio_path): os.remove(original_audio_path)
-            if os.path.exists(wav_audio_path): os.remove(wav_audio_path)
+    
+    current_survey = db.query(Feedback).filter(Feedback.user_id == user_id, Feedback.status != 'completed').first()
+
+    # --- LÓGICA DE INICIO CON TU FRASE CLAVE PREFERIDA ---
+    frases_de_inicio = ['quiero dejar un comentario', 'dejar un comentario']
+    
+    if not current_survey and user_message_text in frases_de_inicio:
+        print(f"Iniciando nueva encuesta para {user_id} a través de la frase clave.")
+        new_survey = Feedback(user_id=user_id, status='step_1_sent', current_step=1, created_at=datetime.datetime.utcnow(), updated_at=datetime.datetime.utcnow())
+        db.add(new_survey)
+        db.commit()
+        
+        q1_text = "¡Genial! Para empezar, ¿cómo calificarías tu experiencia general con la app?"
+        q1_buttons = ["Mala 👎", "Regular 😐", "Buena 👍"]
+        send_whatsapp_message(user_id, q1_text, q1_buttons)
+
+    elif current_survey and current_survey.current_step == 1:
+        respuesta_texto = user_message_text
+        
+        if respuesta_texto in ["mala 👎", "regular 😐", "buena 👍"]:
+            if respuesta_texto == "mala 👎": rating_num = 1
+            elif respuesta_texto == "regular 😐": rating_num = 3
+            else: rating_num = 5
             
-    # --- LÓGICA DE PROCESAMIENTO DE TEXTO ---
-    elif payload['type'] == 'text':
-        final_text = payload['content']
-        db_entry.original_text = final_text
-    
-    if not final_text:
-        print("Texto final vacío. Terminando tarea.")
-        return
+            current_survey.q1_rating = rating_num
+            current_survey.status = 'step_2_sent'
+            current_survey.current_step = 2
+            
+            # --- TUS MENSAJES PERSONALIZADOS ---
+            if rating_num <= 2:
+                q2_text = "Entendido, lamentamos que tu experiencia no haya sido la ideal.\n\n*Por favor, cuéntanos qué salió mal o qué podríamos mejorar.*\n\nPuedes *escribirlo o enviarnos una nota de voz* con los detalles. 🎤"
+            elif rating_num == 3:
+                q2_text = "Entendido, gracias.\n\n*Cuéntanos un poco más sobre tu experiencia.* ¿Qué podríamos mejorar o qué te motivó a darnos esa calificación?\n\nPuedes *escribir tu respuesta o enviarnos una nota de voz*. 🎤"
+            else:
+                q2_text = "¡Nos alegra saber eso!\n\n*Para ayudarnos a entenderlo mejor, ¿qué fue lo que más te gustó?*\n\n¡Nos encantaría que nos lo contaras *por texto o en una nota de voz*! 🎤"
+            
+            send_whatsapp_message(user_id, q2_text)
+            db.commit()
+        else:
+            send_whatsapp_message(user_id, "Por favor, selecciona una de las opciones válidas usando los botones.")
 
-    # --- ANÁLISIS DE IA CON GEMINI ---
-    try:
-        print("[GEMINI_STEP] Analizando sentimiento (con reintentos)...")
-        prompt_sentiment = f"""Analiza el sentimiento del siguiente comentario. Responde únicamente con 'Positivo', 'Negativo' o 'Neutral'. Comentario: "{final_text}" """
-        response_sentiment = generate_content_with_retry(model_text, prompt_sentiment)
-        sentiment = response_sentiment.text.strip()
-        db_entry.sentiment = sentiment
-        print(f"[GEMINI_STEP] Sentimiento detectado: {sentiment}")
+    elif current_survey and current_survey.current_step == 2:
+        if not user_message_text:
+             print("Respuesta a P2 vacía. Ignorando.")
+             db.close()
+             return
 
-        if sentiment == 'Negativo':
-            print("[GEMINI_STEP] Generando resumen de queja (con reintentos)...")
-            prompt_summary = f"""Del siguiente comentario negativo, resume en una frase concisa la queja principal. Comentario: "{final_text}" """
-            response_summary = generate_content_with_retry(model_text, prompt_summary)
-            db_entry.summary = response_summary.text.strip()
-            print(f"[GEMINI_STEP] Resumen de queja: {db_entry.summary}")
+        current_survey.q2_feedback = user_message_text
+        current_survey.status = 'completed'
+        current_survey.current_step = 3
+        current_survey.updated_at = datetime.datetime.utcnow()
 
-    except Exception as e:
-        print(f"ERROR FINAL DURANTE ANÁLISIS CON GEMINI: {e}")
-        return
+        send_whatsapp_message(user_id, "¡Recibido! Muchas gracias por tu feedback. Nos es de gran ayuda para mejorar. 🙏")
 
-    # --- GUARDAR EN BASE DE DATOS ---
-    db_session = SessionLocal()
-    try:
-        db_session.add(db_entry)
-        db_session.commit()
-        print("¡Resultados guardados en la base de datos!")
-    except Exception as e:
-        db_session.rollback()
-        print(f"ERROR AL GUARDAR EN BASE DE DATOS: {e}")
-    finally:
-        db_session.close()
-    
+        try:
+            full_feedback_text = f"Calificación: {current_survey.q1_rating}/5. Comentario: {current_survey.q2_feedback}"
+            
+            prompt_sentiment = f"Analiza el sentimiento del siguiente feedback. Responde 'Positivo', 'Negativo' o 'Neutral'. Feedback: \"{full_feedback_text}\""
+            response_sentiment = generate_content_with_retry(model_text, prompt_sentiment)
+            current_survey.final_sentiment = response_sentiment.text.strip()
+            
+            if current_survey.q1_rating <= 3:
+                prompt_summary = f"Resume la queja principal del siguiente feedback en una frase: \"{full_feedback_text}\""
+                response_summary = generate_content_with_retry(model_text, prompt_summary)
+                current_survey.final_summary = response_summary.text.strip()
+            
+            db.commit()
+            print("Análisis de Gemini completado y guardado.")
+        except Exception as e:
+            print(f"Error en el análisis final con Gemini: {e}")
+            db.rollback()
+
+    else:
+        # --- MENSAJE DE AYUDA ACTUALIZADO ---
+        send_whatsapp_message(user_id, "Hola. Si quieres dejarnos un comentario sobre la app, por favor, envía la frase: quiero dejar un comentario")
+        
+    db.close()
     print("--- FIN TAREA ---")
