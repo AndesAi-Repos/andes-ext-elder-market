@@ -1,0 +1,20 @@
+# Entorno Virtual de Python
+venv/
+
+# Modelo de VOSK
+vosk-model-*/
+
+# Dependencias de Node.js
+express_webhook/node_modules/
+node_modules/
+
+# Archivos de caché
+__pycache__/
+*.pyc
+
+# Archivo de secretos
+.env
+
+# Archivos de sistema operativo
+.DS_Store
+Thumbs.db
