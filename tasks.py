@@ -74,7 +74,7 @@ def generate_content_with_retry(model, prompt, max_retries=3):
     raise Exception("Se superó el número máximo de reintentos para la API de Gemini.")
 
 
-# --- 4. LA TAREA PRINCIPAL DE CELERY (MOTOR DE ENCUESTA DE 5 PASOS) ---
+# --- 4. LA TAREA PRINCIPAL DE CELERY (MOTOR DE ENCUESTAS CORREGIDO) ---
 @celery_app.task(name='process_feedback_task')
 def process_feedback(payload):
     print(f"--- INICIO TAREA --- Usuario: {payload['user_id']}, Tipo: {payload['type']}")
@@ -87,9 +87,7 @@ def process_feedback(payload):
     if payload['type'] == 'text' or payload['type'] == 'interactive':
         user_message_text = payload.get('content', '').strip().lower()
     elif payload['type'] == 'audio':
-        # (La lógica de transcripción de audio con Vosk no cambia)
         try:
-            # ... (código de transcripción de audio) ...
             media_id = payload['media_id']
             api_token = os.getenv("WHATSAPP_API_TOKEN")
             url_info = f"https://graph.facebook.com/v20.0/{media_id}/"
@@ -122,73 +120,74 @@ def process_feedback(payload):
             print(f"Error en transcripción de audio: {e}")
             db.close()
             return
-
-    # 2. Buscar si hay una encuesta en progreso
+    
     current_survey = db.query(Feedback).filter(Feedback.user_id == user_id, Feedback.status != 'completed').first()
 
     # 3. Lógica del motor de encuestas por pasos
     frases_de_inicio = ['quiero dejar un comentario', 'dejar un comentario']
     
     if not current_survey and user_message_text in frases_de_inicio:
-        # PASO 0: INICIAR ENCUESTA
         print(f"Iniciando nueva encuesta para {user_id}.")
         new_survey = Feedback(user_id=user_id, status='step_1_sent', current_step=1, created_at=datetime.datetime.utcnow(), updated_at=datetime.datetime.utcnow())
         db.add(new_survey)
         db.commit()
-        q1_text = "¡Genial! Para empezar, en una escala de 1 a 3, ¿qué tan probable es que recomiendes nuestra app a un amigo?"
-        q1_buttons = ["No muy probable 👎", "Quizás 🤔", "Muy probable 👍"]
+        q1_text = "¡Genial! Para empezar, ¿cómo calificarías tu experiencia general con la app?"
+        q1_buttons = ["Mala 👎", "Regular 😐", "Buena 👍"]
         send_whatsapp_message(user_id, q1_text, q1_buttons)
 
     elif current_survey and current_survey.current_step == 1:
-        # PASO 1: RECIBIR RESPUESTA NPS
         respuesta_texto = user_message_text
-        if respuesta_texto in ["no muy probable 👎", "quizás 🤔", "muy probable 👍"]:
+        opciones_validas = ["mala 👎", "regular 😐", "buena 👍"]
+        if respuesta_texto in opciones_validas:
+            if respuesta_texto == "mala 👎": rating_num = 1
+            elif respuesta_texto == "regular 😐": rating_num = 3
+            else: rating_num = 5
+            
             current_survey.q1_nps = respuesta_texto
             current_survey.status = 'step_2_sent'
             current_survey.current_step = 2
             
-            if respuesta_texto == "no muy probable 👎":
-                q2_text = "Entendido, gracias por tu honestidad. Para nosotros es crucial saber en qué fallamos. *¿Cuál fue la razón principal de tu calificación?*\n\nPuedes *escribirlo o enviarnos una nota de voz*. 🎤"
-            elif respuesta_texto == "quizás 🤔":
-                q2_text = "Gracias por tu respuesta. Nos encantaría saber qué podría convertir tu experiencia en una excelente. *¿Qué le falta a la app o qué podríamos hacer mejor para que la recomendaras?*\n\nPuedes *escribirlo o enviarnos una nota de voz*. 🎤"
-            else: # Muy probable
-                q2_text = "¡Fantástico! Nos alegra mucho saber eso. *¿Qué fue lo que más te gustó o la característica que te pareció más útil?*\n\nPuedes *escribirlo o en una nota de voz*. 🎤"
+            if rating_num <= 2:
+                q2_text = "Entendido, lamentamos que tu experiencia no haya sido la ideal.\n\n*Por favor, cuéntanos qué salió mal o qué podríamos mejorar.*\n\nPuedes *escribirlo o enviarnos una nota de voz* con los detalles. 🎤"
+            elif rating_num == 3:
+                q2_text = "Entendido, gracias.\n\n*Cuéntanos un poco más sobre tu experiencia.* ¿Qué podríamos mejorar o qué te motivó a darnos esa calificación?\n\nPuedes *escribir tu respuesta o enviarnos una nota de voz*. 🎤"
+            else:
+                q2_text = "¡Nos alegra saber eso!\n\n*Para ayudarnos a entenderlo mejor, ¿qué fue lo que más te gustó?*\n\n¡Nos encantaría que nos lo contaras *por texto o en una nota de voz*! 🎤"
+            
             send_whatsapp_message(user_id, q2_text)
             db.commit()
         else:
-            send_whatsapp_message(user_id, "Por favor, selecciona una de las opciones usando los botones.")
+            q1_text_retry = "Por favor, para esta pregunta, selecciona una de las tres opciones usando los botones."
+            q1_buttons_retry = ["Mala 👎", "Regular 😐", "Buena 👍"]
+            send_whatsapp_message(user_id, q1_text_retry, q1_buttons_retry)
 
     elif current_survey and current_survey.current_step == 2:
-        # PASO 2: RECIBIR EL "PORQUÉ"
         current_survey.q2_reason = user_message_text
         current_survey.status = 'step_3_sent'
         current_survey.current_step = 3
         db.commit()
-        q3_text = "Entendido. Ahora, pensando en las características principales de la app, ¿cuál de estas áreas es la *más importante* para ti?"
-        q3_buttons = ["Diseño y Facilidad de Uso ✨", "Velocidad y Rendimiento 🚀", "Funcionalidades Específicas 🛠️"]
+        q3_text = "Entendido. Ahora, ¿cuál de estas áreas es la *más importante* para ti?"
+        q3_buttons = ["Diseño/Usabilidad ✨", "Rendimiento 🚀", "Funciones 🛠️"]
         send_whatsapp_message(user_id, q3_text, q3_buttons)
 
     elif current_survey and current_survey.current_step == 3:
-        # PASO 3: RECIBIR LA PRIORIDAD
         current_survey.q3_priority = user_message_text
         current_survey.status = 'step_4_sent'
         current_survey.current_step = 4
         db.commit()
-        q4_text = "Gracias por esa información. Si tuvieras una varita mágica, *¿qué única función o mejora añadirías a la aplicación?*"
+        q4_text = "Gracias. Si nos pudieras aconsejar, *¿qué única función o mejora añadirías a la aplicación?*"
         send_whatsapp_message(user_id, q4_text)
 
     elif current_survey and current_survey.current_step == 4:
-        # PASO 4: RECIBIR LA "VARITA MÁGICA"
         current_survey.q4_magic_wand = user_message_text
         current_survey.status = 'step_5_sent'
         current_survey.current_step = 5
         db.commit()
-        q5_text = "¡Ya casi terminamos! Solo una última pregunta. ¿Cómo descubriste nuestra aplicación?"
-        q5_buttons = ["Redes Sociales 📱", "Recomendación de un amigo 🗣️", "Navegando en la web 🌐"]
-        send_whatsapp_message(user_id, q5_text, q5_buttons)
+        q5_text = "¡Ya casi terminamos! ¿Cómo descubriste nuestra aplicación?"
+        q5_buttons = ["Redes Sociales 📱", "Por un amigo 🗣️", "Navegando la web 🌐"]
+        send_whatsapp_message(user_id, q5_buttons)
 
     elif current_survey and current_survey.current_step == 5:
-        # PASO 5: RECIBIR CANAL DE DESCUBRIMIENTO Y FINALIZAR
         current_survey.q5_discovery = user_message_text
         current_survey.status = 'completed'
         current_survey.current_step = 6
@@ -196,7 +195,6 @@ def process_feedback(payload):
 
         send_whatsapp_message(user_id, "¡Eso es todo! Muchísimas gracias por tu tiempo y por ayudarnos a construir una mejor aplicación. ¡Tu feedback es increíblemente valioso para nosotros! 🙏")
 
-        # ANÁLISIS FINAL CON GEMINI
         try:
             full_feedback_text = f"NPS: {current_survey.q1_nps}. Razón: {current_survey.q2_reason}. Prioridad: {current_survey.q3_priority}. Sugerencia: {current_survey.q4_magic_wand}."
             
@@ -204,7 +202,7 @@ def process_feedback(payload):
             response_sentiment = generate_content_with_retry(model_text, prompt_sentiment)
             current_survey.final_sentiment = response_sentiment.text.strip()
             
-            if current_survey.q1_nps != "Muy probable 👍":
+            if current_survey.q1_nps != "muy probable 👍":
                 prompt_summary = f"Del siguiente feedback, resume la queja o sugerencia principal en una frase corta y accionable: \"{full_feedback_text}\""
                 response_summary = generate_content_with_retry(model_text, prompt_summary)
                 current_survey.final_summary = response_summary.text.strip()
@@ -216,7 +214,6 @@ def process_feedback(payload):
             db.rollback()
 
     else:
-        # Mensaje fuera de contexto
         send_whatsapp_message(user_id, "Hola. Si quieres dejarnos un comentario sobre la app, por favor, envía la frase: quiero dejar un comentario")
         
     db.close()
