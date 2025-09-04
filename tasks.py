@@ -141,9 +141,9 @@ def process_feedback(payload):
             respuesta_texto = user_message_text.lower()
             chosen_option = None
 
-            keywords_mala = ["mala", "mal", "pésima", "terrible", "horrible", "no me gustó", "no probable"]
-            keywords_regular = ["regular", "normal", "más o menos", "meh", "aceptable", "quizás", "tal vez"]
-            keywords_buena = ["buena", "bien", "excelente", "genial", "me encantó", "me gustó mucho", "muy probable"]
+            keywords_mala = ["mala", "mal", "pésima", "terrible", "horrible", "no me gustó", "no probable", "jamas", "no", "nunca", "ni por error"]
+            keywords_regular = ["regular", "normal", "más o menos", "meh", "aceptable", "quizás", "tal vez", "no se"]
+            keywords_buena = ["buena", "bien", "excelente", "genial", "me encantó", "me gustó mucho", "muy probable", "probable", "seguramente", "seguro", "si"]
 
             if any(keyword in respuesta_texto for keyword in keywords_mala):
                 chosen_option = "No muy probable 👎"
@@ -171,7 +171,7 @@ def process_feedback(payload):
                 send_whatsapp_message(user_id, q2_text)
                 db.commit()
             else:
-                q1_text_retry = "No entendí tu respuesta. Por favor, para esta pregunta, selecciona una de las tres opciones usando los botones."
+                q1_text_retry = "No te pude entender. Por favor, elige una de las opciones con los botones."
                 q1_buttons_retry = ["No muy probable 👎", "Quizás 🤔", "Muy probable 👍"]
                 send_whatsapp_message(user_id, q1_text_retry, q1_buttons_retry)
 
@@ -180,7 +180,7 @@ def process_feedback(payload):
             current_survey.status = 'step_3_sent'
             current_survey.current_step = 3
             db.commit()
-            q3_text = "Entendido. Ahora, pensando en las características principales de la app, ¿cuál de estas áreas es la **más importante** para ti?"
+            q3_text = "Entendido. Ahora, pensando en las características principales de la app, ¿cuál de estas áreas es la *más importante* para ti?"
             q3_buttons = ["Diseño/Usabilidad ✨", "Rendimiento 🚀", "Funciones 🛠️"]
             send_whatsapp_message(user_id, q3_text, q3_buttons)
 
@@ -188,9 +188,9 @@ def process_feedback(payload):
             respuesta_texto = user_message_text.lower()
             chosen_option = None
 
-            keywords_diseno = ["diseño", "usabilidad", "fácil", "interfaz", "apariencia"]
-            keywords_rendimiento = ["velocidad", "rendimiento", "rápida", "lenta", "carga"]
-            keywords_funciones = ["funciones", "características", "herramientas", "opciones"]
+            keywords_diseno = ["diseño", "usabilidad", "fácil", "interfaz", "apariencia", "interfaz", "interfaces", "vistas", "colores"]
+            keywords_rendimiento = ["velocidad", "rendimiento", "rápida", "lenta", "carga", "optimizacion"]
+            keywords_funciones = ["funciones", "características", "herramientas", "opciones", "funcionalidades"]
 
             if any(keyword in respuesta_texto for keyword in keywords_diseno):
                 chosen_option = "Diseño/Usabilidad ✨"
@@ -204,10 +204,10 @@ def process_feedback(payload):
                 current_survey.status = 'step_4_sent'
                 current_survey.current_step = 4
                 db.commit()
-                q4_text = "Gracias. Si tuvieras una varita mágica, **¿qué única función o mejora añadirías a la aplicación?**"
+                q4_text = "Gracias. Si tuvieras una varita mágica, *¿qué única función o mejora añadirías a la aplicación?*"
                 send_whatsapp_message(user_id, q4_text)
             else:
-                send_whatsapp_message(user_id, "No entendí. Por favor, selecciona una de las tres áreas usando los botones.")
+                send_whatsapp_message(user_id, "No te pude entender. Por favor, elige una de las opciones con los botones.")
 
         elif current_survey.current_step == 4:
             current_survey.q4_magic_wand = user_message_text
@@ -222,9 +222,9 @@ def process_feedback(payload):
             respuesta_texto = user_message_text.lower()
             chosen_option = None
 
-            keywords_redes = ["redes", "sociales", "instagram", "facebook", "tiktok"]
-            keywords_amigo = ["amigo", "amiga", "recomendación", "me dijeron", "un conocido"]
-            keywords_web = ["web", "navegando", "internet", "google", "buscando", "anuncio"]
+            keywords_redes = ["redes", "sociales", "instagram", "facebook", "tiktok", "un post", "un reel"]
+            keywords_amigo = ["amigo", "amiga", "recomendación", "me dijeron", "un conocido", "una conocida", "conocido", "conocida"]
+            keywords_web = ["web", "navegando", "internet", "google", "buscando", "anuncio", "opera"]
 
             if any(keyword in respuesta_texto for keyword in keywords_redes):
                 chosen_option = "Redes Sociales 📱"
@@ -259,7 +259,7 @@ def process_feedback(payload):
                     print(f"Error en el análisis final con Gemini: {e}")
                     db.rollback()
             else:
-                send_whatsapp_message(user_id, "No entendí. Por favor, elige una de las opciones con los botones.")
+                send_whatsapp_message(user_id, "No te pude entender. Por favor, elige una de las opciones con los botones.")
     
     else:
         send_whatsapp_message(user_id, "Hola. Si quieres dejarnos un comentario sobre la app, por favor, envía la frase: quiero dejar un comentario")
