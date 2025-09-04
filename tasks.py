@@ -162,11 +162,11 @@ def process_feedback(payload):
                 current_survey.current_step = 2
                 
                 if rating_num == 1:
-                    q2_text = "Entendido, gracias por tu honestidad. Para nosotros es crucial saber en qué fallamos. **¿Cuál fue la razón principal de tu calificación?**\n\nPuedes *escribirlo o enviarnos una nota de voz*. 🎤"
+                    q2_text = "Entendido, gracias por tu honestidad. Para nosotros es crucial saber en qué fallamos. *¿Cuál fue la razón principal de tu calificación?*\n\nPuedes *escribirlo o enviarnos una nota de voz*. 🎤"
                 elif rating_num == 2:
-                    q2_text = "Gracias por tu respuesta. Nos encantaría saber qué podría convertir tu experiencia en una excelente. **¿Qué le falta a la app o qué podríamos hacer mejor para que la recomendaras?**\n\nPuedes *escribirlo o enviarnos una nota de voz*. 🎤"
+                    q2_text = "Gracias por tu respuesta. Nos encantaría saber qué podría convertir tu experiencia en una excelente. *¿Qué le falta a la app o qué podríamos hacer mejor para que la recomendaras?*\n\nPuedes *escribirlo o enviarnos una nota de voz*. 🎤"
                 else:
-                    q2_text = "¡Fantástico! Nos alegra mucho saber eso. **¿Qué fue lo que más te gustó o la característica que te pareció más útil?**\n\nPuedes *escribirlo o en una nota de voz*. 🎤"
+                    q2_text = "¡Fantástico! Nos alegra mucho saber eso. *¿Qué fue lo que más te gustó o la característica que te pareció más útil?*\n\nPuedes *escribirlo o en una nota de voz*. 🎤"
                 
                 send_whatsapp_message(user_id, q2_text)
                 db.commit()
