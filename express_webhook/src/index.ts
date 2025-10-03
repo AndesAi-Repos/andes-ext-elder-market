@@ -3,7 +3,7 @@
 import express, { Request, Response } from 'express';
 const celery = require('celery-node');
 
-const VERIFY_TOKEN = "1234567"; // <-- ¡No olvides poner tu token!
+const VERIFY_TOKEN = "testing_elder_survey_2025"; // Token actualizado
 
 const client = celery.createClient(
   'redis://localhost:6379/0',
@@ -31,33 +31,11 @@ app.post('/webhook', (req: Request, res: Response) => {
     console.log('--- Nuevo Mensaje Recibido ---');
     console.log('Payload completo:', JSON.stringify(req.body, null, 2));
 
-    const message = req.body.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
-
-    if (message) {
-        const userId = message.from;
-        const messageType = message.type;
-        
-        // Creamos un payload base que enviaremos a Python
-        let taskPayload: any = { user_id: userId, type: messageType };
-
-        // Extraemos la información relevante según el tipo de mensaje
-        if (messageType === 'text') {
-            taskPayload.content = message.text.body;
-        } else if (messageType === 'audio') {
-            taskPayload.media_id = message.audio.id;
-        } else if (messageType === 'interactive' && message.interactive?.type === 'button_reply') {
-            // Si el usuario presiona un botón, nos interesa el texto del botón
-            taskPayload.content = message.interactive.button_reply.title;
-        } else {
-            console.log(`Mensaje de tipo no soportado ('${messageType}'). Ignorando.`);
-            return res.sendStatus(200);
-        }
-        
-        // Enviamos la tarea a nuestro worker de Python
-        const task = client.createTask('process_feedback_task');
-        task.applyAsync([taskPayload]);
-        console.log('Tarea encolada para Celery:', taskPayload);
-    }
+    // Enviar el payload completo de WhatsApp tal como llega
+    // Python ya sabe cómo procesarlo
+    const task = client.createTask('tasks.process_whatsapp_message');
+    task.applyAsync([req.body]);  // Enviar payload original completo
+    console.log('Payload completo enviado a Celery');
     
     res.sendStatus(200);
 });

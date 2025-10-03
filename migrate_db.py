@@ -1,82 +1,72 @@
+# migrate_db.py - Script para migrar y actualizar la base de datos
+
 import os
 from sqlalchemy import create_engine, text
 from dotenv import load_dotenv
-import sys
+from database import init_db, SessionLocal
 
-def run_migration_v2():
-    """
-    Actualiza el esquema de la tabla 'feedbacks' a la v2.0 para la encuesta de 5 preguntas.
-    Este script es 'idempotente', lo que significa que se puede ejecutar varias veces 
-    sin causar errores si los cambios ya se han aplicado.
-    """
-    print("======================================================")
-    print("=  Iniciando Migración v2.0 para Encuesta Completa   =")
-    print("======================================================")
-    
-    # Cargar variables de entorno para la conexión
-    load_dotenv()
-    DB_USER = os.getenv("DB_USER")
-    DB_PASSWORD = os.getenv("DB_PASSWORD")
-    DB_HOST = os.getenv("DB_HOST")
-    DB_PORT = os.getenv("DB_PORT")
-    DB_NAME = os.getenv("DB_NAME")
+# Cargar variables de entorno
+load_dotenv()
 
-    if not all([DB_USER, DB_PASSWORD, DB_HOST, DB_PORT, DB_NAME]):
-        print("\n[ERROR] Faltan variables de entorno para la base de datos en el archivo .env.")
-        sys.exit(1)
-
-    DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
-    
+def migrate_database():
+    """Ejecuta migraciones necesarias para la base de datos"""
     try:
-        engine = create_engine(DATABASE_URL)
-        with engine.connect() as connection:
-            print("\n[INFO] Conexión con la base de datos establecida.")
+        print("🔄 Iniciando migración de base de datos...")
+        
+        # Crear tablas si no existen
+        print("📋 Creando/actualizando tablas...")
+        init_db()
+        
+        # Obtener sesión de base de datos
+        db = SessionLocal()
+        
+        try:
+            # Verificar si las nuevas columnas existen
+            print("🔍 Verificando nuevas columnas...")
             
-            with connection.begin() as transaction:
-                
-                print("\n--- PASO 1/2: Eliminando columnas antiguas (si existen) ---")
-                columnas_a_eliminar = ["q1_rating", "q2_feedback"]
-                for col in columnas_a_eliminar:
-                    try:
-                        connection.execute(text(f"ALTER TABLE feedbacks DROP COLUMN {col};"))
-                        print(f"[ÉXITO] Columna antigua '{col}' eliminada.")
-                    except Exception as e:
-                        # Si la columna no existe, es un aviso, no un error.
-                        if "does not exist" in str(e):
-                            print(f"[AVISO] La columna '{col}' no existe. Saltando.")
-                        else:
-                            # Si es otro error, lo mostramos y detenemos
-                            raise e
-
-                print("\n--- PASO 2/2: Añadiendo nuevas columnas para la encuesta de 5 pasos ---")
-                columnas_a_anadir = {
-                    "q1_nps": "VARCHAR(50)",
-                    "q2_reason": "TEXT",
-                    "q3_priority": "VARCHAR(100)",
-                    "q4_magic_wand": "TEXT",
-                    "q5_discovery": "VARCHAR(100)"
-                }
-                for col, tipo in columnas_a_anadir.items():
-                    try:
-                        connection.execute(text(f"ALTER TABLE feedbacks ADD COLUMN {col} {tipo};"))
-                        print(f"[ÉXITO] Columna nueva '{col}' añadida.")
-                    except Exception as e:
-                        # Si la columna ya existe, es un aviso, no un error.
-                        if "already exists" in str(e):
-                            print(f"[AVISO] La columna '{col}' ya existe. Saltando.")
-                        else:
-                            raise e
-
-                transaction.commit()
+            # Lista de columnas a agregar
+            new_columns = [
+                ("is_in_followup", "INTEGER DEFAULT 0"),
+                ("followup_question", "INTEGER"),
+                ("q13b_circunstancias_soledad", "TEXT")
+            ]
             
-            print("\n======================================================")
-            print("=  ¡Migración v2.0 completada con éxito!           =")
-            print("=  La tabla 'feedbacks' está lista para la encuesta de 5 preguntas. =")
-            print("======================================================")
-
+            for column_name, column_type in new_columns:
+                try:
+                    # Intentar agregar la columna si no existe
+                    alter_query = f"ALTER TABLE feedbacks ADD COLUMN {column_name} {column_type};"
+                    db.execute(text(alter_query))
+                    print(f"✅ Columna agregada: {column_name}")
+                except Exception as e:
+                    if "already exists" in str(e).lower() or "duplicate column" in str(e).lower():
+                        print(f"ℹ️  Columna ya existe: {column_name}")
+                    else:
+                        print(f"⚠️  Error agregando {column_name}: {e}")
+            
+            # Actualizar tipo de columna q13_soledad
+            try:
+                # En PostgreSQL, cambiar el tipo de columna
+                db.execute(text("ALTER TABLE feedbacks ALTER COLUMN q13_soledad TYPE VARCHAR(100);"))
+                print("✅ Tipo de columna q13_soledad actualizado")
+            except Exception as e:
+                print(f"ℹ️  q13_soledad: {e}")
+            
+            db.commit()
+            print("💾 Cambios guardados en la base de datos")
+            
+        finally:
+            db.close()
+        
+        print("🎉 Migración completada exitosamente!")
+        return True
+        
     except Exception as e:
-        print(f"\n!!!!!!!!!!!!!! ERROR DURANTE LA MIGRACIÓN !!!!!!!!!!!!!!")
-        print(f"Detalles: {e}")
+        print(f"❌ Error durante la migración: {e}")
+        return False
 
 if __name__ == "__main__":
-    run_migration_v2()
+    success = migrate_database()
+    if success:
+        print("\n✨ Base de datos lista para preguntas condicionales!")
+    else:
+        print("\n🚫 Migración falló. Revisar errores arriba.")

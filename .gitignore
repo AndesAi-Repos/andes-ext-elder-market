@@ -1,20 +1,134 @@
-# Entorno Virtual de Python
-venv/
+# .gitignore - Archivos y directorios a ignorar
 
-# Modelo de VOSK
+# === ENTORNO VIRTUAL ===
+venv/
+env/
+ENV/
+.venv/
+
+# === ARCHIVOS DE CONFIGURACIÓN SENSIBLES ===
+.env
+.env.local
+.env.production
+config/production.py
+
+# === PYTHON ===
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# === JUPYTER ===
+.ipynb_checkpoints
+
+# === PYTEST ===
+.pytest_cache/
+.coverage
+htmlcov/
+
+# === ARCHIVOS TEMPORALES ===
+*.wav
+*.mp3
+*.tmp
+temp_*
+
+# === LOGS ===
+logs/
+*.log
+*.log.*
+
+# === BASE DE DATOS ===
+*.db
+*.sqlite
+*.sqlite3
+backups/
+
+# === NODE.JS ===
+node_modules/
+express_webhook/node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.npm
+.yarn/
+
+# === MODELO VOSK ===
 vosk-model-*/
 
-# Dependencias de Node.js
-express_webhook/node_modules/
-node_modules/
+# === TERRAFORM ===
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
 
-# Archivos de caché
-__pycache__/
-*.pyc
+# === AWS ===
+.aws/
+aws-exports.js
 
-# Archivo de secretos
-.env
+# === DOCKER ===
+.dockerignore
 
-# Archivos de sistema operativo
+# === IDEs ===
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# === SISTEMA OPERATIVO ===
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
 Thumbs.db
+
+# === CERTIFICADOS ===
+*.pem
+*.key
+*.crt
+*.cer
+
+# === ARCHIVOS DE DEPLOYMENT ===
+deploy/.env
+deploy/terraform.tfvars
+
+# === ARCHIVOS DE BACKUP ===
+*.bak
+*.backup
+*.sql
+
+# === ARCHIVOS DE MONITOREO ===
+.htop
+.monitor
+
+# === CACHE DE DEPENDENCIAS ===
+.cache/
+.pip-cache/
+pip-log.txt
+
+# === ARCHIVOS DE TEST ===
+test-results/
+coverage/
+
+# === ARCHIVOS DE DOCUMENTACIÓN GENERADA ===
+docs/_build/
+site/
