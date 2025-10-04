@@ -331,3 +331,84 @@ def process_elderly_audio(audio_path: str) -> Tuple[str, Dict[str, Any]]:
 def cleanup_audio_files():
     """Función de utilidad para limpiar archivos temporales"""
     audio_processor.cleanup_temp_files()
+
+def analyze_audio_quality(audio_path: str) -> Dict[str, Any]:
+    """
+    Función simple para analizar calidad de audio
+    Usada por tasks.py para detectar audio muy corto o de mala calidad
+    """
+    try:
+        # Obtener información básica del archivo
+        probe = ffmpeg.probe(audio_path)
+        audio_stream = next(s for s in probe['streams'] if s['codec_type'] == 'audio')
+        
+        duration = float(audio_stream.get('duration', 0))
+        file_size = os.path.getsize(audio_path) / 1024  # KB
+        
+        # Determinar calidad basada en duración y tamaño
+        if duration < 0.5:
+            quality = "muy_corto"
+        elif duration < 1.0:
+            quality = "corto"
+        elif file_size < 5:
+            quality = "baja_calidad"
+        else:
+            quality = "aceptable"
+        
+        return {
+            'duration': duration,
+            'size_kb': file_size,
+            'quality': quality
+        }
+        
+    except Exception as e:
+        logger.warning(f"⚠️ Error analizando audio: {e}")
+        return {
+            'duration': 1.0,
+            'size_kb': 10.0,
+            'quality': 'desconocido'
+        }
+
+def transcribe_with_vosk(wav_path: str, model_vosk) -> Tuple[str, float]:
+    """
+    Transcribe audio usando Vosk y devuelve texto + confianza
+    """
+    import json
+    import wave
+    from vosk import KaldiRecognizer
+    
+    try:
+        with wave.open(wav_path, "rb") as wf:
+            rec = KaldiRecognizer(model_vosk, wf.getframerate())
+            
+            # Procesar audio en chunks
+            results = []
+            while True:
+                data = wf.readframes(4000)
+                if len(data) == 0:
+                    break
+                if rec.AcceptWaveform(data):
+                    result = json.loads(rec.Result())
+                    if result.get('text'):
+                        results.append(result)
+            
+            # Resultado final
+            final_result = json.loads(rec.FinalResult())
+            if final_result.get('text'):
+                results.append(final_result)
+            
+            # Combinar todos los textos
+            full_text = ' '.join([r.get('text', '') for r in results])
+            
+            # Calcular confianza promedio (estimada)
+            if results:
+                # Vosk no devuelve confianza directamente, estimamos basado en longitud
+                confidence = min(0.95, len(full_text.split()) * 0.1 + 0.3)
+            else:
+                confidence = 0.0
+            
+            return full_text.strip(), confidence
+            
+    except Exception as e:
+        logger.error(f"❌ Error en transcripción Vosk: {e}")
+        return "", 0.0

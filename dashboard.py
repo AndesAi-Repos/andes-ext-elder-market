@@ -6,11 +6,16 @@ from database import SessionLocal, Feedback
 from datetime import datetime, timedelta
 import numpy as np
 import os
+import logging
 from dotenv import load_dotenv
 import warnings
 import logging
 
 # --- CONFIGURACIÓN INICIAL PARA UN ENTORNO LIMPIO ---
+# Configurar logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 # Suprimir warnings de deprecación de Plotly y otros
 warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -34,6 +39,9 @@ load_dotenv()
 gemini_api_key = os.getenv("GEMINI_API_KEY")
 if not gemini_api_key:
     print("⚠️ Warning: GEMINI_API_KEY no encontrada en .env")
+else:
+    genai.configure(api_key=gemini_api_key)
+    print("✅ Gemini API configurada correctamente")
 
 # Configuración de la página
 st.set_page_config(
@@ -70,54 +78,111 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 def generar_perfil_usuario_gemini(usuario_data):
-    """Genera un perfil breve del usuario usando Gemini - OPTIMIZADO para menos tokens"""
+    """Genera un perfil breve del usuario usando Gemini con toda la información disponible"""
     try:
         # Verificar si Gemini está configurado
         gemini_api_key = os.getenv("GEMINI_API_KEY")
         if not gemini_api_key:
             return "🔑 API key de Gemini no configurada"
         
-        # Solo usar los campos MÁS importantes para minimizar tokens
-        respuestas_clave = []
-        campos_esenciales = [
-            ('q18_edad', 'edad'),
-            ('q3_nivel_productividad', 'productividad'), 
-            ('q4_uso_tecnologia', 'tecnología'),
-            ('q13_soledad', 'social')
-        ]
+        # Recopilar TODAS las respuestas importantes de la encuesta
+        informacion_usuario = []
         
-        for campo, key in campos_esenciales:
+        # Mapeo de todas las preguntas importantes
+        campos_importantes = {
+            'q1_nombre': 'Nombre',
+            'q2_situacion_vivienda': 'Situación de vivienda',
+            'q3_nivel_productividad': 'Nivel de productividad',
+            'q4_uso_tecnologia': 'Uso de tecnología',
+            'q5_actividad_principal': 'Actividad principal',
+            'q6_grado_salud': 'Estado de salud',
+            'q7_movilidad': 'Movilidad',
+            'q8_apoyo_familia': 'Apoyo familiar',
+            'q9_participacion_social': 'Participación social',
+            'q10_decision_compras': 'Decisiones de compra',
+            'q11_preferencia_productos': 'Preferencias de productos',
+            'q12_metodo_pago': 'Método de pago preferido',
+            'q13_soledad': 'Sentimientos de soledad',
+            'q14_actividades_ocio': 'Actividades de ocio',
+            'q15_necesidades_servicios': 'Necesidades de servicios',
+            'q16_prioridades_compra': 'Prioridades al comprar',
+            'q17_ingresos': 'Situación económica',
+            'q18_edad': 'Edad',
+            'q19_educacion': 'Nivel educativo',
+            'q20_experiencia_laboral': 'Experiencia laboral',
+            'q21_habilidades_digitales': 'Habilidades digitales',
+            'q22_redes_sociales': 'Uso de redes sociales',
+            'q23_compras_online': 'Compras en línea',
+            'q24_transporte': 'Medio de transporte',
+            'q25_comunicacion_familia': 'Comunicación familiar',
+            'q26_tiempo_libre': 'Tiempo libre',
+            'q27_comentarios': 'Comentarios adicionales'
+        }
+        
+        # Recopilar solo las respuestas que tiene el usuario
+        for campo, descripcion in campos_importantes.items():
             if campo in usuario_data and usuario_data[campo] and str(usuario_data[campo]).strip() != '':
-                # Acortar las respuestas para ahorrar tokens
-                respuesta = str(usuario_data[campo])[:50]  # Máximo 50 caracteres
-                respuestas_clave.append(f"{key}: {respuesta}")
+                valor = str(usuario_data[campo]).strip()
+                if valor and valor != 'None' and valor != '':
+                    informacion_usuario.append(f"• {descripcion}: {valor}")
         
-        if len(respuestas_clave) < 2:  # Mínimo 2 respuestas para perfil
+        if len(informacion_usuario) < 3:  # Mínimo 3 respuestas para perfil
             return "📝 Necesita más respuestas para análisis IA"
         
-        # Configurar modelo aquí para evitar problemas de inicialización
+        # Configurar modelo con los modelos disponibles actuales
         genai.configure(api_key=gemini_api_key)
-        model = genai.GenerativeModel('gemini-pro')  # Cambiar a modelo estable
-        generation_config = {"temperature": 0.3}
         
-        # Prompt ultra-compacto para ahorrar tokens
-        prompt = f"""Perfil empático de adulto mayor (máx 60 palabras):
-{' | '.join(respuestas_clave)}
-Enfoque: fortalezas y actitud positiva."""
+        # Usar modelos que realmente están disponibles (basado en la lista actual)
+        modelos_disponibles = [
+            'models/gemini-2.5-flash',
+            'models/gemini-2.0-flash', 
+            'models/gemini-flash-latest'
+        ]
         
-        response = model.generate_content(prompt, generation_config=generation_config)
-        return response.text.strip()
+        for modelo_nombre in modelos_disponibles:
+            try:
+                model = genai.GenerativeModel(modelo_nombre)
+                print(f"✅ Usando modelo {modelo_nombre}")
+                
+                generation_config = {"temperature": 0.3}
+                
+                # Prompt mejorado y más flexible
+                prompt = f"""Dame un resumen empático y personalizado en tercera persona de este usuario según la información de su encuesta:
+
+{chr(10).join(informacion_usuario)}
+
+Genera un perfil de máximo 80 palabras que destaque:
+- Sus fortalezas y aspectos positivos
+- Su personalidad y estilo de vida
+- Sus habilidades y experiencias
+- Su actitud hacia la vida
+
+Enfoque: comprensivo, respetuoso y que resalte sus cualidades."""
+                
+                response = model.generate_content(prompt, generation_config=generation_config)
+                return response.text.strip()
+                
+            except Exception as e:
+                print(f"❌ Error con {modelo_nombre}: {str(e)[:100]}")
+                continue
+        
+        # Si ningún modelo funciona
+        return "⚠️ Servicio de IA temporalmente no disponible"
         
     except Exception as e:
         error_msg = str(e)
+        print(f"🔴 Error detallado en Gemini: {error_msg}")
+        
         if "404" in error_msg:
-            return "❌ Error: Modelo Gemini no disponible. Verifica configuración API."
-        elif "permission" in error_msg.lower():
+            return "❌ Error 404: Modelo no encontrado en tu región. Intenta con otro modelo."
+        elif "403" in error_msg or "permission" in error_msg.lower():
             return "🔐 Error: Sin permisos API. Verifica tu API key de Gemini."
-        elif "quota" in error_msg.lower():
+        elif "quota" in error_msg.lower() or "limit" in error_msg.lower():
             return "⚠️ Error: Cuota API agotada. Intenta más tarde."
+        elif "SAFETY" in error_msg.upper():
+            return "🛡️ Contenido bloqueado por filtros de seguridad. Intenta de nuevo."
         else:
-            return f"⚠️ Error IA: {str(e)[:50]}..."
+            return f"⚠️ Error IA: {str(e)[:80]}..."
 
 @st.cache_data
 def load_data():
@@ -354,18 +419,18 @@ def main():
         st.markdown('<div class="section-header">👤 Perfiles de Usuarios</div>', unsafe_allow_html=True)
         
         if not df_filtrado.empty:
-            # Filtrar usuarios con al menos 5 respuestas
-            usuarios_con_respuestas = df_filtrado[df_filtrado['current_step'] >= 5]
+            # Filtrar SOLO usuarios que completaron la encuesta
+            usuarios_completados = df_filtrado[
+                (df_filtrado['current_step'] >= 27) & 
+                (df_filtrado['status'] == 'completed')
+            ]
             
-            if not usuarios_con_respuestas.empty:
-                st.write(f"**{len(usuarios_con_respuestas)} usuarios disponibles para análisis IA:**")
-                
-                # Advertencia sobre el uso de API
-                st.info("🔥 **Uso Responsable de IA:** Los perfiles se generan bajo demanda para optimizar el uso de la API de Gemini")
-                
-                # Mostrar usuarios en cards compactas
-                for idx, usuario in usuarios_con_respuestas.head(10).iterrows():  # Limitar a 10 para no sobrecargar
-                    with st.expander(f"👤 Usuario {usuario['user_id'][-6:]} - Paso {usuario['current_step']}", expanded=False):
+            if not usuarios_completados.empty:
+                st.write(f"**{len(usuarios_completados)} usuarios completaron la encuesta y están disponibles para análisis IA:**")
+             
+                # Mostrar usuarios reales que completaron la encuesta
+                for idx, (_, usuario) in enumerate(usuarios_completados.iterrows()):
+                    with st.expander(f"👤 Usuario {usuario['user_id']} - Paso {usuario['current_step']}", expanded=False):
                         col1, col2, col3 = st.columns([2, 1, 1])
                         
                         with col1:
@@ -375,18 +440,20 @@ def main():
                             st.write(f"• **Inicio:** {usuario['created_at'].strftime('%Y-%m-%d')}")
                             
                             # Mostrar algunas respuestas clave
-                            if usuario['q18_edad']:
+                            if pd.notna(usuario['q18_edad']) and str(usuario['q18_edad']) != 'None':
                                 st.write(f"• **Edad:** {usuario['q18_edad']}")
-                            if usuario['q3_nivel_productividad']:
+                            if pd.notna(usuario['q3_nivel_productividad']) and str(usuario['q3_nivel_productividad']) != 'None':
                                 st.write(f"• **Productividad:** {usuario['q3_nivel_productividad']}")
-                            if usuario['q4_uso_tecnologia']:
+                            if pd.notna(usuario['q4_uso_tecnologia']) and str(usuario['q4_uso_tecnologia']) != 'None':
                                 st.write(f"• **Tecnología:** {usuario['q4_uso_tecnologia']}")
                         
                         with col2:
                             # Botón para generar perfil individual
                             if st.button(f"🤖 Generar Perfil IA", key=f"gen_{idx}"):
                                 with st.spinner("Generando perfil con Gemini..."):
-                                    perfil = generar_perfil_usuario_gemini(usuario.to_dict())
+                                    # Convertir Serie de pandas a diccionario
+                                    usuario_dict = usuario.to_dict()
+                                    perfil = generar_perfil_usuario_gemini(usuario_dict)
                                     st.session_state[f"perfil_{idx}"] = perfil
                         
                         with col3:
@@ -394,11 +461,8 @@ def main():
                             if f"perfil_{idx}" in st.session_state:
                                 st.write("**Perfil IA:**")
                                 st.write(st.session_state[f"perfil_{idx}"])
-                
-                if len(usuarios_con_respuestas) > 10:
-                    st.info(f"Mostrando los primeros 10 usuarios de {len(usuarios_con_respuestas)} totales para optimizar rendimiento.")
             else:
-                st.info("No hay usuarios con suficientes respuestas para generar perfiles.")
+                st.info("No hay usuarios que hayan completado la encuesta completa (27 pasos).")
         else:
             st.info("No hay datos de usuarios disponibles.")
     

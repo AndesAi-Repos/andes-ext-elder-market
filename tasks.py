@@ -12,7 +12,7 @@ from vosk import Model, KaldiRecognizer
 from database import SessionLocal, Feedback
 from survey_questions import ELDERLY_SURVEY_QUESTIONS
 from whatsapp_service import whatsapp_service
-from audio_processing import process_elderly_audio, cleanup_audio_files
+from audio_processing import process_elderly_audio, cleanup_audio_files, analyze_audio_quality, transcribe_with_vosk
 
 # Cargar variables de entorno
 load_dotenv()
@@ -209,35 +209,90 @@ def handle_audio_message(db, survey, from_number, audio_data):
             
             # Guardar audio original
             original_audio_path = f"temp_{uuid.uuid4()}.ogg"
+            wav_audio_path = f"temp_{uuid.uuid4()}.wav"
             
             with open(original_audio_path, 'wb') as f: 
                 f.write(response_download.content)
             
-            # 🎵 PROCESAR AUDIO CON FILTROS AVANZADOS PARA ADULTOS MAYORES
-            logger.info("🔧 Aplicando filtros de audio especializados...")
-            processed_audio_path, audio_quality = process_elderly_audio(original_audio_path)
+            # 🎵 SISTEMA DE TRANSCRIPCIÓN INTELIGENTE CON DOBLE INTENTO
+            logger.info("🔧 Iniciando transcripción inteligente...")
             
-            logger.info(f"📊 Calidad de audio: {audio_quality['recommendation']}")
-            logger.info(f"🎯 Claridad: {audio_quality['clarity']:.1f}% | "
-                       f"Ruido: {audio_quality['noise_level']:.1f}% | "
-                       f"Duración: {audio_quality['duration']:.1f}s")
+            # PASO 1: Análisis de Calidad de Audio
+            audio_quality = analyze_audio_quality(original_audio_path)
+            logger.info(f"� Análisis: Duración: {audio_quality['duration']:.1f}s | "
+                       f"Tamaño: {audio_quality['size_kb']:.1f}KB | "
+                       f"Calidad: {audio_quality['quality']}")
             
-            # Transcribir con Vosk usando el audio procesado
-            with wave.open(processed_audio_path, "rb") as wf:
-                rec = KaldiRecognizer(model_vosk, wf.getframerate())
-                while True:
-                    data = wf.readframes(4000)
-                    if len(data) == 0: 
-                        break
-                    rec.AcceptWaveform(data)
+            # Si el audio es muy corto o muy pequeño, solicitar repetir
+            if audio_quality['duration'] < 0.5 or audio_quality['size_kb'] < 5:
+                logger.warning("⚠️ Audio demasiado corto o pequeño")
+                os.remove(original_audio_path)
+                send_whatsapp_message(from_number, 
+                    "🎤 Audio muy corto. Por favor grabe un mensaje más largo y claro 📢")
+                return {'status': 'audio_too_short'}
             
-            result_dict = json.loads(rec.FinalResult())
-            transcribed_text = result_dict.get('text', '')
+            # PASO 2: Primer Intento - Conversión Básica
+            transcribed_text = ""
+            conversion_success = False
+            
+            try:
+                logger.info("🎯 Intento 1: Conversión básica sin filtros")
+                (ffmpeg.input(original_audio_path)
+                 .output(wav_audio_path, 
+                        acodec='pcm_s16le', 
+                        ac=1, 
+                        ar=16000)
+                 .run(overwrite_output=True, quiet=True))
+                
+                # Transcribir
+                transcribed_text, confidence = transcribe_with_vosk(wav_audio_path, model_vosk)
+                logger.info(f"✅ Intento 1 exitoso - Confianza: {confidence:.2f}")
+                conversion_success = True
+                
+                # Si la confianza es baja, intentar con filtros
+                if confidence < 0.6:
+                    logger.info("🔄 Confianza baja, intentando con filtros mínimos...")
+                    os.remove(wav_audio_path)  # Limpiar archivo anterior
+                    raise Exception("Low confidence, trying with filters")
+                    
+            except Exception as e:
+                logger.warning(f"⚠️ Intento 1 falló: {str(e)[:50]}")
+                conversion_success = False
+            
+            # PASO 3: Segundo Intento - Con Filtros Mínimos (solo si el primero falló)
+            if not conversion_success or (transcribed_text and len(transcribed_text.strip()) < 3):
+                try:
+                    logger.info("🎯 Intento 2: Con filtros mínimos de rescate")
+                    wav_audio_path_2 = f"temp_{uuid.uuid4()}_filtered.wav"
+                    
+                    (ffmpeg.input(original_audio_path)
+                     .output(wav_audio_path_2, 
+                            acodec='pcm_s16le', 
+                            ac=1, 
+                            ar=16000,
+                            af='volume=1.2,highpass=f=100')  # Filtros mínimos
+                     .run(overwrite_output=True, quiet=True))
+                    
+                    transcribed_text_2, confidence_2 = transcribe_with_vosk(wav_audio_path_2, model_vosk)
+                    logger.info(f"✅ Intento 2 exitoso - Confianza: {confidence_2:.2f}")
+                    
+                    # Usar el mejor resultado
+                    if not conversion_success or confidence_2 > confidence:
+                        transcribed_text = transcribed_text_2
+                        logger.info("🏆 Usando resultado del intento 2")
+                    
+                    os.remove(wav_audio_path_2)
+                    
+                except Exception as e:
+                    logger.error(f"❌ Intento 2 también falló: {e}")
+                    if not conversion_success:
+                        os.remove(original_audio_path)
+                        return {'error': 'audio_conversion_failed'}
             
             # Limpiar archivos temporales
             os.remove(original_audio_path)
-            if os.path.exists(processed_audio_path):
-                os.remove(processed_audio_path)
+            if os.path.exists(wav_audio_path):
+                os.remove(wav_audio_path)
             cleanup_audio_files()  # Limpiar archivos del servicio de audio
             
             if transcribed_text:

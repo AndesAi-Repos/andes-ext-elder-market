@@ -27,7 +27,9 @@ ffmpeg-python==0.2.0         # Audio conversion
 wave                         # Built-in wave processing
 
 # === AI & ML ===
-google-generativeai==0.3.2   # Gemini AI
+google-generativeai>=0.8.5   # Gemini AI (updated for latest models)
+numpy==1.24.3                # Scientific computing
+pandas==2.0.3                # Data analysis
 google-api-core==2.15.0      # Google API core
 google-auth==2.25.2          # Google authentication
 
